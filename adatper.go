@@ -40,7 +40,7 @@ type simpleUnaryAdapter struct {
 }
 
 func makeGenericAdapter(method reflect.Value, inContext, outContext bool) *genericAdapter {
-	var noSupportExists = false
+	noSupportExists := false
 	t := method.Type()
 	numIn := t.NumIn()
 
@@ -72,10 +72,11 @@ func makeGenericAdapter(method reflect.Value, inContext, outContext bool) *gener
 }
 
 func (a *genericAdapter) Invoke(ctx context.Context, w http.ResponseWriter, r *http.Request) (
-	outCtx context.Context, payload interface{}, err error) {
-
+	outCtx context.Context, payload interface{}, err error,
+) {
 	outCtx = ctx
-	values := a.cacheArgs
+	// Create a new slice for each invocation to avoid race conditions
+	values := make([]reflect.Value, a.numIn)
 	for i := 0; i < a.numIn; i++ {
 		typ := a.types[i]
 		v, ok := supportTypes[typ]
@@ -111,14 +112,19 @@ func (a *genericAdapter) Invoke(ctx context.Context, w http.ResponseWriter, r *h
 }
 
 func (a *simplePlainAdapter) Invoke(ctx context.Context, w http.ResponseWriter, r *http.Request) (
-	outCtx context.Context, payload interface{}, err error) {
+	outCtx context.Context, payload interface{}, err error,
+) {
 	outCtx = ctx
+
+	var values []reflect.Value
 	if a.inContext {
-		a.cacheArgs[0] = reflect.ValueOf(ctx)
+		values = []reflect.Value{reflect.ValueOf(ctx)}
+	} else {
+		values = []reflect.Value{}
 	}
 
 	// call it
-	ret := a.method.Call(a.cacheArgs)
+	ret := a.method.Call(values)
 
 	if a.outContext {
 		outCtx = ret[0].Interface().(context.Context)
@@ -137,16 +143,16 @@ func (a *simplePlainAdapter) Invoke(ctx context.Context, w http.ResponseWriter, 
 }
 
 func (a *simpleUnaryAdapter) Invoke(ctx context.Context, w http.ResponseWriter, r *http.Request) (
-	outCtx context.Context, payload interface{}, err error) {
-
+	outCtx context.Context, payload interface{}, err error,
+) {
 	outCtx = ctx
 	data := reflect.New(a.argType.Elem()).Interface()
 	if err = json.NewDecoder(r.Body).Decode(data); err != nil {
 		panic(err)
 	}
 
-	a.cacheArgs[0] = reflect.ValueOf(data)
-	ret := a.method.Call(a.cacheArgs)
+	values := []reflect.Value{reflect.ValueOf(data)}
+	ret := a.method.Call(values)
 
 	if a.outContext {
 		outCtx = ret[0].Interface().(context.Context)
